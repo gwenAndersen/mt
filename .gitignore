@@ -1,0 +1,61 @@
+# Built application files
+*.apk
+*.ap_
+*.aab
+*.aar
+
+# Files for the ART/JVM
+*.dex
+*.class
+*.jar
+*.keystore
+*.jks
+
+# Gradle files
+.gradle/
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+local.properties
+.DS_Store
+*.iml
+.idea/
+.project
+.settings/
+.vs/
+.vscode/
+*.log
+*.logcat
+*.hprof
+*.orig
+*.bak
+*.swp
+*~
+.#*
+# Android Studio and IntelliJ IDEA files
+.idea/
+.idea_modules/
+.gradle/
+local.properties
+.DS_Store
+*.iml
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+
+# Kotlin
+*.kpt
+*.kapt
+.kotlin/
+
+# Gradle-related files
+!gradle-wrapper.jar
+!gradlew
+!gradlew.bat
+
+# Local configuration files (e.g., for CI/CD)
+.env
+.env.*
+.secrets
