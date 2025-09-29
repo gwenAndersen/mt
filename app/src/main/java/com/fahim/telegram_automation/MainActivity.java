@@ -27,6 +27,8 @@ import androidx.core.app.ActivityCompat;
 import com.pengrad.telegrambot.TelegramBot;
 import com.pengrad.telegrambot.request.SendMessage;
 
+import com.google.android.material.color.DynamicColors;
+
 public class MainActivity extends AppCompatActivity {
 
     private static final String TAG = "MainActivity";
@@ -68,6 +70,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        DynamicColors.applyIfAvailable(this);
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
@@ -151,6 +154,11 @@ public class MainActivity extends AppCompatActivity {
         // Register receiver for notifications from the listener service
         LocalBroadcastManager.getInstance(this).registerReceiver(notificationsReceiver,
                 new IntentFilter(ACTION_RECEIVE_NOTIFICATIONS));
+
+        // Start ForegroundService to keep the app alive
+        Intent serviceIntent = new Intent(this, ForegroundService.class);
+        startService(serviceIntent);
+        Log.d(TAG, "ForegroundService started from MainActivity.");
     }
 
     @Override

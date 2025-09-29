@@ -6,49 +6,61 @@
     android:layout_height="match_parent"
     android:orientation="vertical"
     android:padding="16dp"
+    android:background="?android:attr/colorBackground"
     tools:context=".MainActivity">
 
-    <EditText
-        android:id="@+id/messageEditText"
+    <com.google.android.material.textfield.TextInputLayout
+        android:id="@+id/messageInputLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:hint="Enter your message"
-        android:inputType="textMultiLine"
-        android:padding="16dp" />
+        style="@style/Widget.Material3.TextInputLayout.OutlinedBox">
 
-    <Button
+        <com.google.android.material.textfield.TextInputEditText
+            android:id="@+id/messageEditText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:inputType="textMultiLine" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/sendButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
+        android:layout_marginTop="16dp"
         android:text="Send Message" />
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/checkNotificationAccessButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
         android:text="Check Notification Access" />
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/startListenerServiceButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
         android:text="Start Listener Service" />
 
-    <Button
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/refreshNotificationsButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
         android:text="Refresh Active Notifications" />
 
     <ScrollView
         android:id="@+id/scrollView"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="16dp"
         android:layout_weight="1">
 
         <TextView
@@ -56,7 +68,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:padding="16dp"
-            android:text="Active Notifications:" />
+            android:text="Active Notifications:"
+            android:textAppearance="?attr/textAppearanceBodyMedium" />
     </ScrollView>
 
 </LinearLayout>
