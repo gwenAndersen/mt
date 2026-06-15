@@ -12,7 +12,10 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url 'https://jitpack.io' }
+        maven { url "https://mvn.mchv.eu/repository/mchv/" }
+        maven { url "https://mvn.mchv.eu/mchv" }
     }
 }
 
+rootProject.name = "mt"
 include ':app'

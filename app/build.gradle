@@ -6,10 +6,10 @@ plugins {
 }
 
 android {
-    namespace 'com.fahim.telegram_automation'
+    namespace 'com.fahim.mt'
     compileSdk 34
     defaultConfig {
-        applicationId "com.fahim.telegram_automation"
+        applicationId "com.fahim.mt"
         minSdkVersion 24
         targetSdkVersion 35
         versionCode 1
@@ -25,6 +25,25 @@ android {
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
+
+    Properties properties = new Properties()
+    if (project.rootProject.file('local.properties').exists()) {
+        properties.load(project.rootProject.file('local.properties').newDataInputStream())
+    }
+
+    defaultConfig {
+        buildConfigField "int", "TELEGRAM_API_ID", properties.getProperty('telegram.api_id', '0')
+        buildConfigField "String", "TELEGRAM_API_HASH", "\"${properties.getProperty('telegram.api_hash', '')}\""
+
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a'
+        }
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
@@ -35,15 +54,20 @@ android {
 }
 
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.12.0'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    // Keep multidex as it's often needed for background services
     implementation 'androidx.multidex:multidex:2.0.1'
+    implementation "androidx.work:work-runtime-ktx:2.9.0"
+    implementation 'androidx.appcompat:appcompat:1.6.1'
 
-    testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    // Material Components is needed for themes like Theme.Material3.DayNight.NoActionBar
+    implementation 'com.google.android.material:material:1.12.0'
 
     // Telegram Bot API
-    implementation 'com.github.pengrad:java-telegram-bot-api:6.9.0'
+    implementation 'com.github.pengrad:java-telegram-bot-api:7.1.1'
+
+    // Removed TDLight-Java Legacy Jars (switching to official TDLib Java source)
+    
+    implementation 'org.slf4j:slf4j-api:2.0.5'
+    implementation 'org.reactivestreams:reactive-streams:1.0.4'
+    implementation 'io.atlassian.util.concurrent:atlassian-util-concurrent:4.0.1'
 }
