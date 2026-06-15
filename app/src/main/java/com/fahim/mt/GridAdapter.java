@@ -7,9 +7,15 @@ import java.util.List;
 
 public class GridAdapter extends RecyclerView.Adapter<GridAdapter.ViewHolder> {
     private final List<BlockData> blockList;
+    private OnItemClickListener listener;
 
-    public GridAdapter(List<BlockData> blockList) {
+    public interface OnItemClickListener {
+        void onItemClick(int position);
+    }
+
+    public GridAdapter(List<BlockData> blockList, OnItemClickListener listener) {
         this.blockList = blockList;
+        this.listener = listener;
     }
 
     @NonNull
@@ -22,7 +28,7 @@ public class GridAdapter extends RecyclerView.Adapter<GridAdapter.ViewHolder> {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         );
         view.setLayoutParams(params);
-        return new ViewHolder(view);
+        return new ViewHolder(view, listener);
     }
 
     @Override
@@ -37,9 +43,17 @@ public class GridAdapter extends RecyclerView.Adapter<GridAdapter.ViewHolder> {
 
     public static class ViewHolder extends RecyclerView.ViewHolder {
         public final GridBlockView view;
-        public ViewHolder(GridBlockView view) {
+        public ViewHolder(GridBlockView view, OnItemClickListener listener) {
             super(view);
             this.view = view;
+            view.setOnClickListener(v -> {
+                if (listener != null) {
+                    int pos = getAdapterPosition();
+                    if (pos != RecyclerView.NO_POSITION) {
+                        listener.onItemClick(pos);
+                    }
+                }
+            });
         }
     }
 }

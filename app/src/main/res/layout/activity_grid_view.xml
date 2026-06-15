@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
@@ -11,13 +12,38 @@
         android:text="Bot Interaction Grid"
         android:textSize="20sp"
         android:textStyle="bold"
-        android:padding="8dp"
+        android:padding="4dp"
         android:gravity="center" />
+
+    <!-- Dashboard with ViewPager2 -->
+    <LinearLayout
+        android:id="@+id/dashboard"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:orientation="vertical"
+        android:background="#F0F0F0"
+        android:elevation="2dp"
+        android:layout_marginBottom="8dp">
+
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/dashboardTabs"
+            android:layout_width="match_parent"
+            android:layout_height="32dp"
+            app:tabIndicatorHeight="2dp"
+            app:tabGravity="fill"
+            app:tabMode="fixed"
+            app:tabTextAppearance="@style/TextAppearance.Material3.LabelSmall" />
+
+        <androidx.viewpager2.widget.ViewPager2
+            android:id="@+id/dashboardPager"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+    </LinearLayout>
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/recyclerView"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:layout_marginTop="8dp" />
+        android:layout_height="match_parent" />
 
 </LinearLayout>

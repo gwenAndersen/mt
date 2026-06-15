@@ -44,6 +44,16 @@ public class TelegramClientManager {
     ));
     private Set<String> historyMatches = new HashSet<>(); // Format: "BIN:Price"
     private Map<String, Long> historyMatchTimes = new HashMap<>(); // "BIN:Price" -> Timestamp
+    
+    // Persistent Grid State
+    private final List<com.fahim.mt.BlockData> blockList = new ArrayList<>();
+    private int totalRed = 0, totalBlue = 0, totalYellow = 0, totalGold = 0;
+
+    public List<com.fahim.mt.BlockData> getBlockList() { return blockList; }
+    public int getTotalRed() { return totalRed; }
+    public int getTotalBlue() { return totalBlue; }
+    public int getTotalYellow() { return totalYellow; }
+    public int getTotalGold() { return totalGold; }
 
     private enum BotState {
         IDLE,
@@ -55,9 +65,8 @@ public class TelegramClientManager {
     private BotState currentBotState = BotState.IDLE;
 
     public interface BotInteractionListener {
-        void onStepCompleted(); // For start/entering listings
-        void onMatchFound(int count, List<Integer> uniqueIndices, List<Integer> duplicateIndices, List<Integer> historyIndices, List<Integer> goldIndices);
-        void onNextPage();
+        void onGridReset();
+        void onGridUpdated();
     }
 
     public void setInteractionListener(BotInteractionListener listener) {
@@ -227,6 +236,14 @@ public class TelegramClientManager {
         lastScannedMarkupHash = "";
         historyMatches.clear();
         historyMatchTimes.clear();
+        
+        // Reset Grid State
+        blockList.clear();
+        totalRed = 0;
+        totalBlue = 0;
+        totalYellow = 0;
+        totalGold = 0;
+        if (interactionListener != null) interactionListener.onGridReset();
 
         // 1. Fetch History from CentStock Private first
         String historyGroupId = "-1002358473714";
@@ -302,7 +319,11 @@ public class TelegramClientManager {
                     if (result instanceof TdApi.Message) {
                         Log.i(TAG, "Sent /start. Moving to WAIT_LISTINGS.");
                         currentBotState = BotState.WAIT_LISTINGS;
-                        if (interactionListener != null) interactionListener.onStepCompleted();
+                        
+                        handler.post(() -> {
+                            blockList.add(new com.fahim.mt.BlockData(true));
+                            if (interactionListener != null) interactionListener.onGridUpdated();
+                        });
                     }
                 });
             }
@@ -343,7 +364,10 @@ public class TelegramClientManager {
                     for (TdApi.InlineKeyboardButton button : row) {
                         if (button.text.contains("Latest First")) {
                             currentBotState = BotState.SCANNING;
-                            if (interactionListener != null) interactionListener.onStepCompleted();
+                            handler.post(() -> {
+                                blockList.add(new com.fahim.mt.BlockData(true));
+                                if (interactionListener != null) interactionListener.onGridUpdated();
+                            });
                             clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
                             return;
                         }
@@ -358,6 +382,8 @@ public class TelegramClientManager {
                 List<Integer> goldIndices = new ArrayList<>();
                 TdApi.InlineKeyboardButton nextButton = null;
                 int listingCount = 0;
+                double maxPrice = 0.0;
+                double totalPrice = 0.0;
 
                 java.util.regex.Pattern matchPattern = java.util.regex.Pattern.compile(".*(\\d{6})xx:USD\\$([\\d.]+):False.*");
 
@@ -376,8 +402,11 @@ public class TelegramClientManager {
                                 boolean isMainMatch = ALLOWED_BINS.contains(bin) && price < 12.0;
 
                                 if (isHistoryMatch || isMainMatch) {
+                                    if (price > maxPrice) maxPrice = price;
+                                    totalPrice += price;
                                     String listingId = bytesToHex(((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
                                     
+                                    String type = "RED";
                                     if (isHistoryMatch) {
                                         Long msgTime = historyMatchTimes.get(key);
                                         boolean isGold = msgTime != null && (System.currentTimeMillis() - msgTime < 120000); // 2 mins
@@ -385,9 +414,11 @@ public class TelegramClientManager {
                                         if (isGold) {
                                             com.fahim.mt.MainActivity.appendBotChat("GOLD MATCH (Recent History): BIN " + bin + " @ $" + priceStr);
                                             goldIndices.add(listingCount % 20);
+                                            type = "GOLD";
                                         } else {
                                             com.fahim.mt.MainActivity.appendBotChat("BLUE MATCH (History): BIN " + bin + " @ $" + priceStr);
                                             historyIndices.add(listingCount % 20);
+                                            type = "BLUE";
                                         }
                                     } else {
                                         com.fahim.mt.MainActivity.appendBotChat("RED MATCH (Main): BIN " + bin + " @ $" + priceStr);
@@ -395,10 +426,25 @@ public class TelegramClientManager {
 
                                     if (seenListingIds.contains(listingId)) {
                                         duplicateIndices.add(listingCount % 20);
+                                        type = "YELLOW";
                                     } else {
                                         seenListingIds.add(listingId);
                                         if (isMainMatch && !isHistoryMatch) uniqueIndices.add(listingCount % 20);
                                     }
+
+                                    final String finalType = type;
+                                    final String finalBin = bin;
+                                    final String finalPrice = priceStr;
+                                    final double currentPrice = price;
+                                    handler.post(() -> {
+                                        if (!blockList.isEmpty()) {
+                                            com.fahim.mt.BlockData currentBlock = blockList.get(blockList.size() - 1);
+                                            currentBlock.matchDetails.add(
+                                                new com.fahim.mt.BlockData.MatchDetail(finalBin, finalPrice, finalType)
+                                            );
+                                            currentBlock.totalPrice += currentPrice;
+                                        }
+                                    });
                                 }
                             }
                         } else if (btnText.contains("Next") || btnText.contains("➡️")) {
@@ -409,12 +455,54 @@ public class TelegramClientManager {
                 }
 
                 if (!uniqueIndices.isEmpty() || !duplicateIndices.isEmpty() || !historyIndices.isEmpty() || !goldIndices.isEmpty()) {
-                    if (interactionListener != null) interactionListener.onMatchFound(uniqueIndices.size() + duplicateIndices.size() + historyIndices.size() + goldIndices.size(), uniqueIndices, duplicateIndices, historyIndices, goldIndices);
+                    final double finalMaxPrice = maxPrice;
+                    handler.post(() -> {
+                        if (blockList.isEmpty()) {
+                            blockList.add(new com.fahim.mt.BlockData(true));
+                        }
+                        com.fahim.mt.BlockData currentBlock = blockList.get(blockList.size() - 1);
+                        
+                        // Update persistent counts
+                        totalRed += uniqueIndices.size();
+                        totalYellow += duplicateIndices.size();
+                        totalBlue += historyIndices.size();
+                        totalGold += goldIndices.size();
+
+                        currentBlock.matchCount = uniqueIndices.size() + duplicateIndices.size() + historyIndices.size() + goldIndices.size();
+                        currentBlock.matchIndices.addAll(uniqueIndices);
+                        currentBlock.duplicateMatchIndices.addAll(duplicateIndices);
+                        currentBlock.historyMatchIndices.addAll(historyIndices);
+                        currentBlock.goldMatchIndices.addAll(goldIndices);
+                        currentBlock.maxPrice = finalMaxPrice;
+                        currentBlock.isBlankPageGroup = false;
+
+                        if (interactionListener != null) interactionListener.onGridUpdated();
+                    });
                 }
 
                 if (nextButton != null) {
                     TdApi.InlineKeyboardButton finalNext = nextButton;
-                    if (interactionListener != null) interactionListener.onNextPage();
+                    handler.post(() -> {
+                        // Logic for blank page grouping
+                        if (!blockList.isEmpty()) {
+                            com.fahim.mt.BlockData lastBlock = blockList.get(blockList.size() - 1);
+                            if (lastBlock.matchCount == 0) {
+                                if (blockList.size() > 1) {
+                                    com.fahim.mt.BlockData prevBlock = blockList.get(blockList.size() - 2);
+                                    if (prevBlock.isBlankPageGroup) {
+                                        prevBlock.blankPageCount++;
+                                        blockList.remove(blockList.size() - 1);
+                                    } else {
+                                        lastBlock.isBlankPageGroup = true;
+                                    }
+                                } else {
+                                    lastBlock.isBlankPageGroup = true;
+                                }
+                            }
+                        }
+                        blockList.add(new com.fahim.mt.BlockData(true));
+                        if (interactionListener != null) interactionListener.onGridUpdated();
+                    });
                     handler.postDelayed(() -> clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)finalNext.type).data), 1500);
                 }
                 break;
