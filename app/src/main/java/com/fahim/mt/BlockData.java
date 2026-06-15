@@ -8,6 +8,8 @@ public class BlockData {
     public int matchCount = 0;
     public List<Integer> matchIndices = new ArrayList<>();
     public List<Integer> duplicateMatchIndices = new ArrayList<>();
+    public List<Integer> historyMatchIndices = new ArrayList<>();
+    public List<Integer> goldMatchIndices = new ArrayList<>();
 
     public BlockData() {}
 

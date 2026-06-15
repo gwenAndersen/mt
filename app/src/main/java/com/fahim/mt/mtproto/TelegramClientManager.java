@@ -10,9 +10,16 @@ import com.fahim.mt.Logger;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.Locale;
+import java.text.SimpleDateFormat;
 
 import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
@@ -32,9 +39,11 @@ public class TelegramClientManager {
     private boolean isBotRunning = false;
     private Set<String> seenListingIds = new HashSet<>();
     private String lastScannedMarkupHash = "";
-    private static final Set<String> ALLOWED_BINS = new HashSet<>(java.util.Arrays.asList(
+    private static final Set<String> ALLOWED_BINS = new HashSet<>(Arrays.asList(
         "533985", "435880", "491277", "461126", "511332"
     ));
+    private Set<String> historyMatches = new HashSet<>(); // Format: "BIN:Price"
+    private Map<String, Long> historyMatchTimes = new HashMap<>(); // "BIN:Price" -> Timestamp
 
     private enum BotState {
         IDLE,
@@ -47,12 +56,72 @@ public class TelegramClientManager {
 
     public interface BotInteractionListener {
         void onStepCompleted(); // For start/entering listings
-        void onMatchFound(int count, List<Integer> uniqueIndices, List<Integer> duplicateIndices);
+        void onMatchFound(int count, List<Integer> uniqueIndices, List<Integer> duplicateIndices, List<Integer> historyIndices, List<Integer> goldIndices);
         void onNextPage();
     }
 
     public void setInteractionListener(BotInteractionListener listener) {
         this.interactionListener = listener;
+    }
+
+    public interface MessagesCallback {
+        void onMessagesReceived(List<String> messages);
+        void onError(String error);
+    }
+
+    public void fetchRecentMessages(String identifier, int limit, MessagesCallback callback) {
+        if (client == null) return;
+        
+        if (identifier.startsWith("-") || identifier.matches("\\d+")) {
+            // It's a Chat ID
+            try {
+                long chatId = Long.parseLong(identifier);
+                fetchHistoryForId(chatId, limit, callback);
+            } catch (NumberFormatException e) {
+                callback.onError("Invalid Chat ID format");
+            }
+        } else {
+            // It's a Username
+            client.send(new TdApi.SearchPublicChat(identifier), object -> {
+                if (object instanceof TdApi.Chat) {
+                    fetchHistoryForId(((TdApi.Chat) object).id, limit, callback);
+                } else if (object instanceof TdApi.Error) {
+                    callback.onError(((TdApi.Error) object).message);
+                }
+            });
+        }
+    }
+
+    private void fetchHistoryForId(long chatId, int limit, MessagesCallback callback) {
+        client.send(new TdApi.GetChatHistory(chatId, 0, 0, limit, false), historyObj -> {
+            if (historyObj instanceof TdApi.Messages) {
+                TdApi.Messages messages = (TdApi.Messages) historyObj;
+                List<String> result = new ArrayList<>();
+                for (TdApi.Message msg : messages.messages) {
+                    String content = "";
+                    String time = new SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(new Date(msg.date * 1000L));
+                    
+                    if (msg.content instanceof TdApi.MessageText) {
+                        content = ((TdApi.MessageText) msg.content).text.text;
+                    } else if (msg.content instanceof TdApi.MessageDocument) {
+                        TdApi.MessageDocument doc = (TdApi.MessageDocument) msg.content;
+                        content = "[Document] " + doc.caption.text;
+                    } else if (msg.content instanceof TdApi.MessagePhoto) {
+                        TdApi.MessagePhoto photo = (TdApi.MessagePhoto) msg.content;
+                        content = "[Photo] " + photo.caption.text;
+                    } else if (msg.content instanceof TdApi.MessageVideo) {
+                        TdApi.MessageVideo video = (TdApi.MessageVideo) msg.content;
+                        content = "[Video] " + video.caption.text;
+                    } else {
+                        content = "[" + msg.content.getClass().getSimpleName() + "]";
+                    }
+                    result.add("[" + time + "] " + content);
+                }
+                callback.onMessagesReceived(result);
+            } else if (historyObj instanceof TdApi.Error) {
+                callback.onError(((TdApi.Error) historyObj).message);
+            }
+        });
     }
 
     private TelegramClientManager(Context context) {
@@ -111,7 +180,6 @@ public class TelegramClientManager {
         } else if (object instanceof TdApi.UpdateMessageContent) {
             TdApi.UpdateMessageContent update = (TdApi.UpdateMessageContent) object;
             if (update.chatId == targetBotChatId) {
-                // For edited messages or inline updates
                 client.send(new TdApi.GetMessage(update.chatId, update.messageId), msgObj -> {
                     if (msgObj instanceof TdApi.Message) {
                         TdApi.Message msg = (TdApi.Message) msgObj;
@@ -157,7 +225,69 @@ public class TelegramClientManager {
         currentBotState = BotState.STARTING;
         seenListingIds.clear();
         lastScannedMarkupHash = "";
+        historyMatches.clear();
+        historyMatchTimes.clear();
 
+        // 1. Fetch History from CentStock Private first
+        String historyGroupId = "-1002358473714";
+        com.fahim.mt.MainActivity.appendBotChat("Fetching history from CentStock Private for Blue Filter...");
+        
+        fetchRecentMessages(historyGroupId, 20, new MessagesCallback() {
+            @Override
+            public void onMessagesReceived(List<String> messages) {
+                java.util.regex.Pattern binPattern = java.util.regex.Pattern.compile("💳\\s*(\\d{6})");
+                java.util.regex.Pattern pricePattern = java.util.regex.Pattern.compile("📉\\s*Price:\\s*USD\\$([\\d.]+)");
+                java.util.regex.Pattern timePattern = java.util.regex.Pattern.compile("\\[(\\d{2}:\\d{2}:\\d{2})\\]");
+
+                long now = System.currentTimeMillis();
+
+                for (String msg : messages) {
+                    java.util.regex.Matcher binMatcher = binPattern.matcher(msg);
+                    java.util.regex.Matcher priceMatcher = pricePattern.matcher(msg);
+                    java.util.regex.Matcher timeMatcher = timePattern.matcher(msg);
+                    
+                    if (binMatcher.find() && priceMatcher.find()) {
+                        String bin = binMatcher.group(1);
+                        String price = priceMatcher.group(1);
+                        String key = bin + ":" + price;
+                        historyMatches.add(key);
+                        
+                        if (timeMatcher.find()) {
+                            try {
+                                String timeStr = timeMatcher.group(1);
+                                SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss", Locale.getDefault());
+                                Calendar cal = Calendar.getInstance();
+                                Date msgDate = sdf.parse(timeStr);
+                                if (msgDate != null) {
+                                    Calendar msgCal = Calendar.getInstance();
+                                    msgCal.setTime(msgDate);
+                                    cal.set(Calendar.HOUR_OF_DAY, msgCal.get(Calendar.HOUR_OF_DAY));
+                                    cal.set(Calendar.MINUTE, msgCal.get(Calendar.MINUTE));
+                                    cal.set(Calendar.SECOND, msgCal.get(Calendar.SECOND));
+                                    
+                                    if (cal.getTimeInMillis() > now + 10000) cal.add(Calendar.DAY_OF_YEAR, -1);
+                                    historyMatchTimes.put(key, cal.getTimeInMillis());
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "Failed to parse time: " + e.getMessage());
+                            }
+                        }
+                    }
+                }
+                
+                com.fahim.mt.MainActivity.appendBotChat("History Filter initialized with " + historyMatches.size() + " pairs.");
+                startBotInteractionSequence(username);
+            }
+
+            @Override
+            public void onError(String error) {
+                com.fahim.mt.MainActivity.appendBotChat("History Fetch Failed: " + error + ". Proceeding without Blue/Gold Filter.");
+                startBotInteractionSequence(username);
+            }
+        });
+    }
+
+    private void startBotInteractionSequence(String username) {
         client.send(new TdApi.SearchPublicChat(username), object -> {
             if (object instanceof TdApi.Chat) {
                 TdApi.Chat chat = (TdApi.Chat) object;
@@ -192,11 +322,7 @@ public class TelegramClientManager {
 
         TdApi.ReplyMarkupInlineKeyboard inlineKeyboard = (TdApi.ReplyMarkupInlineKeyboard) replyMarkup;
         String currentHash = getMarkupHash(inlineKeyboard);
-        
-        // Prevent rescanning the exact same page state
-        if (currentHash.equals(lastScannedMarkupHash)) {
-            return;
-        }
+        if (currentHash.equals(lastScannedMarkupHash)) return;
         lastScannedMarkupHash = currentHash;
         
         switch (currentBotState) {
@@ -204,7 +330,6 @@ public class TelegramClientManager {
                 for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
                     for (TdApi.InlineKeyboardButton button : row) {
                         if (button.text.contains("Available Listings")) {
-                            Log.i(TAG, "Clicking Available Listings -> Moving to WAIT_SORT");
                             currentBotState = BotState.WAIT_SORT;
                             clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
                             return;
@@ -217,7 +342,6 @@ public class TelegramClientManager {
                 for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
                     for (TdApi.InlineKeyboardButton button : row) {
                         if (button.text.contains("Latest First")) {
-                            Log.i(TAG, "Clicking Latest First -> Moving to SCANNING");
                             currentBotState = BotState.SCANNING;
                             if (interactionListener != null) interactionListener.onStepCompleted();
                             clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
@@ -230,56 +354,66 @@ public class TelegramClientManager {
             case SCANNING:
                 List<Integer> uniqueIndices = new ArrayList<>();
                 List<Integer> duplicateIndices = new ArrayList<>();
+                List<Integer> historyIndices = new ArrayList<>();
+                List<Integer> goldIndices = new ArrayList<>();
                 TdApi.InlineKeyboardButton nextButton = null;
                 int listingCount = 0;
 
-                // Match pattern: index.BINxx:USD$Price:False
-                // Example: 103.403446xx:USD$15.02:False
                 java.util.regex.Pattern matchPattern = java.util.regex.Pattern.compile(".*(\\d{6})xx:USD\\$([\\d.]+):False.*");
 
                 for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
                     for (TdApi.InlineKeyboardButton button : row) {
                         String btnText = button.text;
-                        
-                        // New Match Criteria:
-                        // 1. No 🇬 or 🔐
-                        // 2. BIN matches one of the 5 numbers
-                        // 3. Price < 12
-                        // 4. Contains "False"
                         if (btnText.contains("False") && !btnText.contains("🇬") && !btnText.contains("🔐")) {
                             java.util.regex.Matcher m = matchPattern.matcher(btnText);
                             if (m.find()) {
                                 String bin = m.group(1);
-                                double price = Double.parseDouble(m.group(2));
+                                String priceStr = m.group(2);
+                                double price = Double.parseDouble(priceStr);
                                 
-                                if (ALLOWED_BINS.contains(bin) && price < 12.0) {
+                                String key = bin + ":" + priceStr;
+                                boolean isHistoryMatch = historyMatches.contains(key);
+                                boolean isMainMatch = ALLOWED_BINS.contains(bin) && price < 12.0;
+
+                                if (isHistoryMatch || isMainMatch) {
                                     String listingId = bytesToHex(((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
-                                    com.fahim.mt.MainActivity.appendBotChat("MATCH FOUND: BIN " + bin + " | Price $" + price + " | Text: " + btnText);
+                                    
+                                    if (isHistoryMatch) {
+                                        Long msgTime = historyMatchTimes.get(key);
+                                        boolean isGold = msgTime != null && (System.currentTimeMillis() - msgTime < 120000); // 2 mins
+                                        
+                                        if (isGold) {
+                                            com.fahim.mt.MainActivity.appendBotChat("GOLD MATCH (Recent History): BIN " + bin + " @ $" + priceStr);
+                                            goldIndices.add(listingCount % 20);
+                                        } else {
+                                            com.fahim.mt.MainActivity.appendBotChat("BLUE MATCH (History): BIN " + bin + " @ $" + priceStr);
+                                            historyIndices.add(listingCount % 20);
+                                        }
+                                    } else {
+                                        com.fahim.mt.MainActivity.appendBotChat("RED MATCH (Main): BIN " + bin + " @ $" + priceStr);
+                                    }
+
                                     if (seenListingIds.contains(listingId)) {
                                         duplicateIndices.add(listingCount % 20);
                                     } else {
                                         seenListingIds.add(listingId);
-                                        uniqueIndices.add(listingCount % 20);
+                                        if (isMainMatch && !isHistoryMatch) uniqueIndices.add(listingCount % 20);
                                     }
                                 }
                             }
                         } else if (btnText.contains("Next") || btnText.contains("➡️")) {
                             nextButton = button;
                         }
-
-                        if (btnText.matches(".*\\d+.*") && !btnText.contains("Next") && !btnText.contains("➡️")) {
-                            listingCount++;
-                        }
+                        if (btnText.matches(".*\\d+.*") && !btnText.contains("Next") && !btnText.contains("➡️")) listingCount++;
                     }
                 }
 
-                if (!uniqueIndices.isEmpty() || !duplicateIndices.isEmpty()) {
-                    if (interactionListener != null) interactionListener.onMatchFound(uniqueIndices.size() + duplicateIndices.size(), uniqueIndices, duplicateIndices);
+                if (!uniqueIndices.isEmpty() || !duplicateIndices.isEmpty() || !historyIndices.isEmpty() || !goldIndices.isEmpty()) {
+                    if (interactionListener != null) interactionListener.onMatchFound(uniqueIndices.size() + duplicateIndices.size() + historyIndices.size() + goldIndices.size(), uniqueIndices, duplicateIndices, historyIndices, goldIndices);
                 }
 
                 if (nextButton != null) {
                     TdApi.InlineKeyboardButton finalNext = nextButton;
-                    Log.i(TAG, "Scanning finished. Clicking Next...");
                     if (interactionListener != null) interactionListener.onNextPage();
                     handler.postDelayed(() -> clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)finalNext.type).data), 1500);
                 }

@@ -12,6 +12,8 @@ public class GridBlockView extends View {
     private Paint grayPaint;
     private Paint redPaint;
     private Paint yellowPaint;
+    private Paint bluePaint;
+    private Paint goldPaint;
     private Paint textPaint;
     private Paint borderPaint;
     private BlockData data;
@@ -38,6 +40,14 @@ public class GridBlockView extends View {
         yellowPaint = new Paint();
         yellowPaint.setColor(Color.YELLOW);
         yellowPaint.setStyle(Paint.Style.FILL);
+
+        bluePaint = new Paint();
+        bluePaint.setColor(Color.BLUE);
+        bluePaint.setStyle(Paint.Style.FILL);
+
+        goldPaint = new Paint();
+        goldPaint.setColor(Color.parseColor("#FFD700")); // Gold
+        goldPaint.setStyle(Paint.Style.FILL);
 
         textPaint = new Paint();
         textPaint.setColor(Color.BLACK);
@@ -73,7 +83,7 @@ public class GridBlockView extends View {
             return;
         }
 
-        // 2. Draw Match Sections (Red for Unique, Yellow for Duplicate)
+        // 2. Draw Match Sections (Red for Unique, Yellow for Duplicate, Blue for History, Gold for Recent History)
         float sectionHeight = (float) height / 20f;
         if (!data.matchIndices.isEmpty()) {
             for (int index : data.matchIndices) {
@@ -87,6 +97,20 @@ public class GridBlockView extends View {
                 float top = index * sectionHeight;
                 float bottom = (index + 1) * sectionHeight;
                 canvas.drawRect(0, top, width, bottom, yellowPaint);
+            }
+        }
+        if (!data.historyMatchIndices.isEmpty()) {
+            for (int index : data.historyMatchIndices) {
+                float top = index * sectionHeight;
+                float bottom = (index + 1) * sectionHeight;
+                canvas.drawRect(0, top, width, bottom, bluePaint);
+            }
+        }
+        if (!data.goldMatchIndices.isEmpty()) {
+            for (int index : data.goldMatchIndices) {
+                float top = index * sectionHeight;
+                float bottom = (index + 1) * sectionHeight;
+                canvas.drawRect(0, top, width, bottom, goldPaint);
             }
         }
 

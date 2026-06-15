@@ -114,6 +114,14 @@
         android:text="Refresh Active Notifications" />
 
     <com.google.android.material.button.MaterialButton
+        android:id="@+id/testingGroundButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="8dp"
+        android:text="Testing Ground" />
+
+    <com.google.android.material.button.MaterialButton
         android:id="@+id/openGridViewButton"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"

@@ -168,6 +168,12 @@ public class MainActivity extends AppCompatActivity {
             android.content.Intent intent = new android.content.Intent(this, GridViewActivity.class);
             startActivity(intent);
         });
+
+        MaterialButton testingGroundButton = findViewById(R.id.testingGroundButton);
+        testingGroundButton.setOnClickListener(v -> {
+            android.content.Intent intent = new android.content.Intent(this, TestingGroundActivity.class);
+            startActivity(intent);
+        });
         
         MaterialButton clearLogsButton = findViewById(R.id.sendLogsButton);
         clearLogsButton.setText("Clear Logs");

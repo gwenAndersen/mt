@@ -41,7 +41,7 @@ public class GridViewActivity extends AppCompatActivity implements TelegramClien
     }
 
     @Override
-    public void onMatchFound(int count, List<Integer> uniqueIndices, List<Integer> duplicateIndices) {
+    public void onMatchFound(int count, List<Integer> uniqueIndices, List<Integer> duplicateIndices, List<Integer> historyIndices, List<Integer> goldIndices) {
         runOnUiThread(() -> {
             if (blockList.isEmpty()) {
                 onStepCompleted();
@@ -50,6 +50,8 @@ public class GridViewActivity extends AppCompatActivity implements TelegramClien
             currentBlock.matchCount = count;
             currentBlock.matchIndices.addAll(uniqueIndices);
             currentBlock.duplicateMatchIndices.addAll(duplicateIndices);
+            currentBlock.historyMatchIndices.addAll(historyIndices);
+            currentBlock.goldMatchIndices.addAll(goldIndices);
             adapter.notifyItemChanged(blockList.size() - 1);
         });
     }
