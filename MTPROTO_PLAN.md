@@ -29,12 +29,13 @@ To move forward, the following credentials must be obtained from [my.telegram.or
 - Set up local database storage for session persistence.
 
 ### Phase 3: Interaction Logic
-- **Sending Commands:** Create a utility to send text messages to a specific bot username.
-- **Reading Responses:** Implement an `UpdateHandler` to listen for `UpdateNewMessage` events from the target bot.
-- **Button Interaction:** Implement `GetCallbackQueryAnswer` to simulate clicking inline buttons.
+- **Sending Commands:** [DONE] Utility to send text messages to a specific bot username implemented in `TelegramClientManager.interactWithBot`.
+- **Reading Responses:** [IN PROGRESS] `UpdateNewMessage` handler added to `TelegramClientManager` to capture bot text and inline keyboards.
+- **Button Interaction:** [READY] `clickInlineButton` method implemented to simulate clicking inline buttons using `GetCallbackQueryAnswer`.
 
-### Phase 4: SMS Integration
+## Phase 4: Automation
 - Update `SmsProcessingWorker` to trigger MTProto commands instead of Bot API messages.
+- Implement automatic parsing of sensitive info (e.g., card details) from bot responses.
 
 ## 5. Architectural Notes
 Unlike the Bot API, TDLib is stateful and heavy.

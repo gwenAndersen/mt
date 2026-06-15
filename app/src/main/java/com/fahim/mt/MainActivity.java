@@ -30,8 +30,11 @@ public class MainActivity extends AppCompatActivity {
     private TextInputEditText phoneEditText;
     private MaterialButton loginButton;
     private MaterialButton submitCodeButton;
+    private MaterialButton toggleViewButton;
     private Handler handler = new Handler(Looper.getMainLooper());
     private Runnable logUpdater;
+    private boolean isShowingBotChat = true;
+    private static StringBuilder botChatHistory = new StringBuilder();
 
     private enum AuthState {
         IDLE,
@@ -50,7 +53,16 @@ public class MainActivity extends AppCompatActivity {
         phoneEditText = findViewById(R.id.phoneEditText);
         loginButton = findViewById(R.id.loginButton);
         submitCodeButton = findViewById(R.id.submitCodeButton);
+        toggleViewButton = findViewById(R.id.refreshNotificationsButton); // Repurpose
         logTextView = findViewById(R.id.activeNotificationsTextView);
+
+        toggleViewButton.setVisibility(View.VISIBLE);
+        toggleViewButton.setText("Show System Logs");
+        toggleViewButton.setOnClickListener(v -> {
+            isShowingBotChat = !isShowingBotChat;
+            toggleViewButton.setText(isShowingBotChat ? "Show System Logs" : "Show Bot Chat");
+            refreshLogs();
+        });
         
         checkPermissions();
 
@@ -127,16 +139,16 @@ public class MainActivity extends AppCompatActivity {
 
         // Manual Send Button
         MaterialButton sendButton = findViewById(R.id.sendButton);
-        sendButton.setText("Send to Telegram");
+        sendButton.setText("Start Bot Interaction");
         sendButton.setOnClickListener(v -> {
-            String message = messageEditText.getText().toString();
-            if (!message.isEmpty()) {
-                Log.i(TAG, "Manual message input: " + message);
-                sendToTelegram(message);
-                messageEditText.setText("");
-            } else {
-                Toast.makeText(this, "Please enter a message", Toast.LENGTH_SHORT).show();
+            String botUsername = messageEditText.getText().toString();
+            if (botUsername.isEmpty()) {
+                botUsername = "@CentscardBot"; // Default bot if input is empty
             }
+            Log.i(TAG, "Starting interaction with bot: " + botUsername);
+            Toast.makeText(this, "Starting interaction with " + botUsername, Toast.LENGTH_SHORT).show();
+            TelegramClientManager.getInstance(this).interactWithBot(botUsername);
+            messageEditText.setText("");
         });
 
         // Simplified UI: Hide other buttons
@@ -200,8 +212,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void refreshLogs() {
-        String logs = Logger.getLogs(this);
-        logTextView.setText("App Logs:\n" + logs);
+        if (isShowingBotChat) {
+            logTextView.setText("Bot Chat History:\n" + botChatHistory.toString());
+        } else {
+            String logs = Logger.getLogs(this);
+            logTextView.setText("System Logs:\n" + logs);
+        }
+    }
+
+    public static void appendBotChat(String message) {
+        botChatHistory.append(message).append("\n\n");
     }
 
     @Override
