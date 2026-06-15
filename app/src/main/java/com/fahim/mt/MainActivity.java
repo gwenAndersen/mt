@@ -151,10 +151,23 @@ public class MainActivity extends AppCompatActivity {
             messageEditText.setText("");
         });
 
+        MaterialButton stopBotButton = findViewById(R.id.stopBotButton);
+        stopBotButton.setOnClickListener(v -> {
+            Log.i(TAG, "Stopping Bot Interaction...");
+            TelegramClientManager.getInstance(this).stopBot();
+            Toast.makeText(this, "Bot Stopped", Toast.LENGTH_SHORT).show();
+        });
+
         // Simplified UI: Hide other buttons
         findViewById(R.id.checkNotificationAccessButton).setVisibility(View.GONE);
         findViewById(R.id.startListenerServiceButton).setVisibility(View.GONE);
         findViewById(R.id.refreshNotificationsButton).setVisibility(View.GONE);
+
+        MaterialButton openGridViewButton = findViewById(R.id.openGridViewButton);
+        openGridViewButton.setOnClickListener(v -> {
+            android.content.Intent intent = new android.content.Intent(this, GridViewActivity.class);
+            startActivity(intent);
+        });
         
         MaterialButton clearLogsButton = findViewById(R.id.sendLogsButton);
         clearLogsButton.setText("Clear Logs");

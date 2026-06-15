@@ -9,6 +9,10 @@ import com.fahim.mt.BuildConfig;
 import com.fahim.mt.Logger;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
@@ -22,8 +26,34 @@ public class TelegramClientManager {
     private final Handler handler = new Handler(Looper.getMainLooper());
     private boolean isInitialized = false;
     private AuthCallback authCallback;
+    private BotInteractionListener interactionListener;
     private String phoneNumber;
     private long targetBotChatId = 0;
+    private boolean isBotRunning = false;
+    private Set<String> seenListingIds = new HashSet<>();
+    private String lastScannedMarkupHash = "";
+    private static final Set<String> ALLOWED_BINS = new HashSet<>(java.util.Arrays.asList(
+        "533985", "435880", "491277", "461126", "511332"
+    ));
+
+    private enum BotState {
+        IDLE,
+        STARTING,       // Just sent /start
+        WAIT_LISTINGS,  // Waiting to click Available Listings
+        WAIT_SORT,      // Waiting to click Latest First
+        SCANNING        // Main loop: Scan and Next
+    }
+    private BotState currentBotState = BotState.IDLE;
+
+    public interface BotInteractionListener {
+        void onStepCompleted(); // For start/entering listings
+        void onMatchFound(int count, List<Integer> uniqueIndices, List<Integer> duplicateIndices);
+        void onNextPage();
+    }
+
+    public void setInteractionListener(BotInteractionListener listener) {
+        this.interactionListener = listener;
+    }
 
     private TelegramClientManager(Context context) {
         this.context = context.getApplicationContext();
@@ -69,11 +99,6 @@ public class TelegramClientManager {
     }
 
     private void onResult(TdApi.Object object) {
-        // Log all updates for debugging
-        if (object.getClass().getSimpleName().startsWith("Update")) {
-            Log.d(TAG, "Update Received: " + object.getClass().getSimpleName());
-        }
-
         if (object instanceof TdApi.UpdateAuthorizationState) {
             handleAuthorizationState(((TdApi.UpdateAuthorizationState) object).authorizationState);
         } else if (object instanceof TdApi.AuthorizationState) {
@@ -86,28 +111,28 @@ public class TelegramClientManager {
         } else if (object instanceof TdApi.UpdateMessageContent) {
             TdApi.UpdateMessageContent update = (TdApi.UpdateMessageContent) object;
             if (update.chatId == targetBotChatId) {
-                Log.i(TAG, "Message content updated for bot message: " + update.messageId);
+                // For edited messages or inline updates
+                client.send(new TdApi.GetMessage(update.chatId, update.messageId), msgObj -> {
+                    if (msgObj instanceof TdApi.Message) {
+                        TdApi.Message msg = (TdApi.Message) msgObj;
+                        scanButtons(msg.chatId, msg.id, msg.replyMarkup);
+                    }
+                });
             }
         } else if (object instanceof TdApi.UpdateMessageEdited) {
             TdApi.UpdateMessageEdited update = (TdApi.UpdateMessageEdited) object;
             if (update.chatId == targetBotChatId) {
-                Log.i(TAG, "Message edited for bot message: " + update.messageId);
                 scanButtons(update.chatId, update.messageId, update.replyMarkup);
             }
         } else if (object instanceof TdApi.UpdateChatReplyMarkup) {
             TdApi.UpdateChatReplyMarkup update = (TdApi.UpdateChatReplyMarkup) object;
             if (update.chatId == targetBotChatId && update.replyMarkupMessage != null) {
-                Log.i(TAG, "Chat reply markup updated for bot message: " + update.replyMarkupMessage.id);
                 scanButtons(update.chatId, update.replyMarkupMessage.id, update.replyMarkupMessage.replyMarkup);
             }
         } else if (object instanceof TdApi.Error) {
             TdApi.Error error = (TdApi.Error) object;
             Log.e(TAG, "TDLib Error: " + error.code + " " + error.message);
             if (authCallback != null) authCallback.onError(error.message);
-        } else if (object instanceof TdApi.Ok) {
-            Log.d(TAG, "onResult: Received Ok");
-        } else {
-            Log.d(TAG, "onResult: Received unhandled object: " + object.toString());
         }
     }
 
@@ -116,35 +141,28 @@ public class TelegramClientManager {
     }
 
     public void startAuthentication(String phoneNumber, AuthCallback callback) {
-        Log.i(TAG, "startAuthentication called for " + phoneNumber);
         this.phoneNumber = phoneNumber;
         this.authCallback = callback;
-        if (client == null) {
-            init();
-        } else {
-            // Already initialized, check if we need to send phone number
-            client.send(new TdApi.GetAuthorizationState(), this::onResult);
-        }
+        if (client == null) init();
+        else client.send(new TdApi.GetAuthorizationState(), this::onResult);
     }
 
     public void sendCode(String code) {
-        Log.i(TAG, "sendCode called with: " + code);
-        if (client != null) {
-            client.send(new TdApi.CheckAuthenticationCode(code), this::onResult);
-        }
+        if (client != null) client.send(new TdApi.CheckAuthenticationCode(code), this::onResult);
     }
 
     public void interactWithBot(String username) {
-        Log.i(TAG, "interactWithBot called for: " + username);
         if (client == null) return;
+        isBotRunning = true;
+        currentBotState = BotState.STARTING;
+        seenListingIds.clear();
+        lastScannedMarkupHash = "";
 
         client.send(new TdApi.SearchPublicChat(username), object -> {
             if (object instanceof TdApi.Chat) {
                 TdApi.Chat chat = (TdApi.Chat) object;
                 this.targetBotChatId = chat.id;
-                Log.i(TAG, "Found chat for " + username + " with ID: " + targetBotChatId);
-
-                // Send /start command
+                
                 TdApi.InputMessageText text = new TdApi.InputMessageText(new TdApi.FormattedText("/start", null), null, true);
                 TdApi.SendMessage request = new TdApi.SendMessage();
                 request.chatId = targetBotChatId;
@@ -152,90 +170,150 @@ public class TelegramClientManager {
 
                 client.send(request, result -> {
                     if (result instanceof TdApi.Message) {
-                        Log.i(TAG, "Sent /start to " + username + " successfully.");
-                    } else if (result instanceof TdApi.Error) {
-                        Log.e(TAG, "Failed to send /start: " + ((TdApi.Error) result).message);
+                        Log.i(TAG, "Sent /start. Moving to WAIT_LISTINGS.");
+                        currentBotState = BotState.WAIT_LISTINGS;
+                        if (interactionListener != null) interactionListener.onStepCompleted();
                     }
                 });
-            } else if (object instanceof TdApi.Error) {
-                Log.e(TAG, "Failed to find bot " + username + ": " + ((TdApi.Error) object).message);
             }
         });
+    }
+
+    public void stopBot() {
+        isBotRunning = false;
+        currentBotState = BotState.IDLE;
+        lastScannedMarkupHash = "";
+        com.fahim.mt.MainActivity.appendBotChat("Bot Stopped.");
     }
 
     private void scanButtons(long chatId, long messageId, TdApi.ReplyMarkup replyMarkup) {
-        if (replyMarkup == null) return;
-        if (replyMarkup instanceof TdApi.ReplyMarkupInlineKeyboard) {
-            TdApi.ReplyMarkupInlineKeyboard inlineKeyboard = (TdApi.ReplyMarkupInlineKeyboard) replyMarkup;
-            boolean foundNext = false;
-            TdApi.InlineKeyboardButton nextButton = null;
+        if (!isBotRunning || replyMarkup == null) return;
+        if (!(replyMarkup instanceof TdApi.ReplyMarkupInlineKeyboard)) return;
 
-            for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
-                for (TdApi.InlineKeyboardButton button : row) {
-                    if (button.type instanceof TdApi.InlineKeyboardButtonTypeCallback) {
-                        TdApi.InlineKeyboardButtonTypeCallback callback = (TdApi.InlineKeyboardButtonTypeCallback) button.type;
-                        String btnText = button.text;
-
-                        // 1. Auto-click "Available Listings" (Initial Entry)
-                        if (btnText.contains("Available Listings")) {
-                            Log.i(TAG, "Entering Listings...");
-                            com.fahim.mt.MainActivity.appendBotChat("Scanning Listings...");
-                            clickInlineButton(chatId, messageId, callback.data);
-                        } 
-                        // 2. Filter specific listings (False + ✅)
-                        else if (btnText.contains("False") && btnText.contains("✅")) {
-                            Log.i(TAG, "MATCH FOUND: " + btnText);
-                            com.fahim.mt.MainActivity.appendBotChat("Match: " + btnText);
-                        }
-                        // 3. Track Next button for pagination
-                        else if (btnText.contains("Next") || btnText.contains("➡️")) {
-                            nextButton = button;
-                            foundNext = true;
+        TdApi.ReplyMarkupInlineKeyboard inlineKeyboard = (TdApi.ReplyMarkupInlineKeyboard) replyMarkup;
+        String currentHash = getMarkupHash(inlineKeyboard);
+        
+        // Prevent rescanning the exact same page state
+        if (currentHash.equals(lastScannedMarkupHash)) {
+            return;
+        }
+        lastScannedMarkupHash = currentHash;
+        
+        switch (currentBotState) {
+            case WAIT_LISTINGS:
+                for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
+                    for (TdApi.InlineKeyboardButton button : row) {
+                        if (button.text.contains("Available Listings")) {
+                            Log.i(TAG, "Clicking Available Listings -> Moving to WAIT_SORT");
+                            currentBotState = BotState.WAIT_SORT;
+                            clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
+                            return;
                         }
                     }
                 }
-            }
+                break;
 
-            // 4. Auto-paginate if Next button found
-            if (foundNext && nextButton != null) {
-                TdApi.InlineKeyboardButtonTypeCallback nextCallback = (TdApi.InlineKeyboardButtonTypeCallback) nextButton.type;
-                Log.i(TAG, "Auto-paginating to next page: " + nextButton.text);
-                // Small delay to prevent flood and make it visible
-                handler.postDelayed(() -> clickInlineButton(chatId, messageId, nextCallback.data), 1500);
-            }
+            case WAIT_SORT:
+                for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
+                    for (TdApi.InlineKeyboardButton button : row) {
+                        if (button.text.contains("Latest First")) {
+                            Log.i(TAG, "Clicking Latest First -> Moving to SCANNING");
+                            currentBotState = BotState.SCANNING;
+                            if (interactionListener != null) interactionListener.onStepCompleted();
+                            clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
+                            return;
+                        }
+                    }
+                }
+                break;
+
+            case SCANNING:
+                List<Integer> uniqueIndices = new ArrayList<>();
+                List<Integer> duplicateIndices = new ArrayList<>();
+                TdApi.InlineKeyboardButton nextButton = null;
+                int listingCount = 0;
+
+                // Match pattern: index.BINxx:USD$Price:False
+                // Example: 103.403446xx:USD$15.02:False
+                java.util.regex.Pattern matchPattern = java.util.regex.Pattern.compile(".*(\\d{6})xx:USD\\$([\\d.]+):False.*");
+
+                for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
+                    for (TdApi.InlineKeyboardButton button : row) {
+                        String btnText = button.text;
+                        
+                        // New Match Criteria:
+                        // 1. No 🇬 or 🔐
+                        // 2. BIN matches one of the 5 numbers
+                        // 3. Price < 12
+                        // 4. Contains "False"
+                        if (btnText.contains("False") && !btnText.contains("🇬") && !btnText.contains("🔐")) {
+                            java.util.regex.Matcher m = matchPattern.matcher(btnText);
+                            if (m.find()) {
+                                String bin = m.group(1);
+                                double price = Double.parseDouble(m.group(2));
+                                
+                                if (ALLOWED_BINS.contains(bin) && price < 12.0) {
+                                    String listingId = bytesToHex(((TdApi.InlineKeyboardButtonTypeCallback)button.type).data);
+                                    com.fahim.mt.MainActivity.appendBotChat("MATCH FOUND: BIN " + bin + " | Price $" + price + " | Text: " + btnText);
+                                    if (seenListingIds.contains(listingId)) {
+                                        duplicateIndices.add(listingCount % 20);
+                                    } else {
+                                        seenListingIds.add(listingId);
+                                        uniqueIndices.add(listingCount % 20);
+                                    }
+                                }
+                            }
+                        } else if (btnText.contains("Next") || btnText.contains("➡️")) {
+                            nextButton = button;
+                        }
+
+                        if (btnText.matches(".*\\d+.*") && !btnText.contains("Next") && !btnText.contains("➡️")) {
+                            listingCount++;
+                        }
+                    }
+                }
+
+                if (!uniqueIndices.isEmpty() || !duplicateIndices.isEmpty()) {
+                    if (interactionListener != null) interactionListener.onMatchFound(uniqueIndices.size() + duplicateIndices.size(), uniqueIndices, duplicateIndices);
+                }
+
+                if (nextButton != null) {
+                    TdApi.InlineKeyboardButton finalNext = nextButton;
+                    Log.i(TAG, "Scanning finished. Clicking Next...");
+                    if (interactionListener != null) interactionListener.onNextPage();
+                    handler.postDelayed(() -> clickInlineButton(chatId, messageId, ((TdApi.InlineKeyboardButtonTypeCallback)finalNext.type).data), 1500);
+                }
+                break;
         }
     }
 
-    private void handleNewMessage(TdApi.Message message) {
-        // scanButtons logic moved to onResult/scanButtons
+    private String getMarkupHash(TdApi.ReplyMarkupInlineKeyboard inlineKeyboard) {
+        StringBuilder sb = new StringBuilder();
+        for (TdApi.InlineKeyboardButton[] row : inlineKeyboard.rows) {
+            for (TdApi.InlineKeyboardButton button : row) {
+                if (button.type instanceof TdApi.InlineKeyboardButtonTypeCallback) {
+                    sb.append(bytesToHex(((TdApi.InlineKeyboardButtonTypeCallback) button.type).data));
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    private String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte b : bytes) sb.append(String.format("%02x", b));
+        return sb.toString();
     }
 
     public void clickInlineButton(long chatId, long messageId, byte[] data) {
-        Log.i(TAG, "Clicking inline button for message: " + messageId);
-        client.send(new TdApi.GetCallbackQueryAnswer(chatId, messageId, new TdApi.CallbackQueryPayloadData(data)), result -> {
-            if (result instanceof TdApi.CallbackQueryAnswer) {
-                TdApi.CallbackQueryAnswer answer = (TdApi.CallbackQueryAnswer) result;
-                Log.i(TAG, "Callback answer: " + answer.text);
-                if (answer.text != null && !answer.text.isEmpty()) {
-                    Logger.log(context, "Bot Answer: " + answer.text);
-                }
-            } else if (result instanceof TdApi.Error) {
-                Log.e(TAG, "Failed to click button: " + ((TdApi.Error) result).message);
-            }
-        });
+        client.send(new TdApi.GetCallbackQueryAnswer(chatId, messageId, new TdApi.CallbackQueryPayloadData(data)), result -> {});
     }
 
     public void sendPassword(String password) {
-        Log.i(TAG, "sendPassword called");
-        if (client != null) {
-            client.send(new TdApi.CheckAuthenticationPassword(password), this::onResult);
-        }
+        if (client != null) client.send(new TdApi.CheckAuthenticationPassword(password), this::onResult);
     }
 
     private void handleAuthorizationState(TdApi.AuthorizationState state) {
-        Log.i(TAG, "Authorization state changed to: " + state.getClass().getSimpleName());
-        Logger.log(context, "MTProto State: " + state.getClass().getSimpleName());
-
         if (state instanceof TdApi.AuthorizationStateWaitTdlibParameters) {
             TdApi.SetTdlibParameters parameters = new TdApi.SetTdlibParameters();
             parameters.apiId = BuildConfig.TELEGRAM_API_ID;
@@ -248,41 +326,20 @@ public class TelegramClientManager {
             parameters.systemVersion = android.os.Build.VERSION.RELEASE;
             parameters.applicationVersion = "1.0";
             parameters.databaseEncryptionKey = new byte[0];
-            
             File sessionDir = new File(context.getFilesDir(), "tdlib-session");
             if (!sessionDir.exists()) sessionDir.mkdirs();
             parameters.databaseDirectory = sessionDir.getAbsolutePath();
             parameters.useFileDatabase = true;
-
-            Log.i(TAG, "Sending SetTdlibParameters...");
             client.send(parameters, this::onResult);
         } else if (state instanceof TdApi.AuthorizationStateWaitPhoneNumber) {
-            if (phoneNumber != null) {
-                Log.i(TAG, "Sending SetAuthenticationPhoneNumber: " + phoneNumber);
-                client.send(new TdApi.SetAuthenticationPhoneNumber(phoneNumber, null), this::onResult);
-            } else {
-                Log.i(TAG, "Waiting for phone number input...");
-                // Notify UI if we have a callback
-                if (authCallback != null) {
-                    // This is a bit of a hack, but it lets the UI know it needs to show the login button/field
-                    // Normally the user triggers startAuthentication which sets the callback
-                }
-            }
+            if (phoneNumber != null) client.send(new TdApi.SetAuthenticationPhoneNumber(phoneNumber, null), this::onResult);
         } else if (state instanceof TdApi.AuthorizationStateWaitCode) {
-            Log.i(TAG, "SMS code requested.");
             if (authCallback != null) authCallback.onCodeRequested();
         } else if (state instanceof TdApi.AuthorizationStateWaitPassword) {
-            Log.i(TAG, "2FA password requested.");
             if (authCallback != null) authCallback.onPasswordRequested();
         } else if (state instanceof TdApi.AuthorizationStateReady) {
-            Log.i(TAG, "Authorization Ready!");
             if (authCallback != null) authCallback.onSuccess();
-        } else if (state instanceof TdApi.AuthorizationStateLoggingOut) {
-            Log.i(TAG, "Logging out...");
-        } else if (state instanceof TdApi.AuthorizationStateClosing) {
-            Log.i(TAG, "Closing...");
         } else if (state instanceof TdApi.AuthorizationStateClosed) {
-            Log.i(TAG, "Closed.");
             isInitialized = false;
             client = null;
         }

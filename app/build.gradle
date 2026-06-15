@@ -61,6 +61,7 @@ dependencies {
 
     // Material Components is needed for themes like Theme.Material3.DayNight.NoActionBar
     implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.recyclerview:recyclerview:1.3.2'
 
     // Telegram Bot API
     implementation 'com.github.pengrad:java-telegram-bot-api:7.1.1'
